@@ -1,25 +1,25 @@
 [package]
-name = "rayon"
+name = "rustc-rayon"
 # Reminder to update html_rool_url in lib.rs when updating version
-version = "1.5.3"
+version = "0.4.0"
 authors = ["Niko Matsakis <niko@alum.mit.edu>",
            "Josh Stone <cuviper@gmail.com>"]
-description = "Simple work-stealing parallelism for Rust"
+description = "Simple work-stealing parallelism for Rust - fork for rustc"
 edition = "2018"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/rayon-rs/rayon"
-documentation = "https://docs.rs/rayon/"
+repository = "https://github.com/rust-lang/rustc-rayon"
+documentation = "https://docs.rs/rustc-rayon/"
 readme = "README.md"
 keywords = ["parallel", "thread", "concurrency", "join", "performance"]
 categories = ["concurrency"]
 exclude = ["/ci/*", "/scripts/*", "/.github/*", "/bors.toml"]
 
 [workspace]
-members = ["rayon-demo", "rayon-core"]
+members = ["rayon-core"]
 exclude = ["ci"]
 
 [dependencies]
-rayon-core = { version = "1.9.2", path = "rayon-core" }
+rayon-core = { version = "0.4", path = "rayon-core", package = "rustc-rayon-core" }
 crossbeam-deque = "0.8.1"
 
 # This is a public dependency!
