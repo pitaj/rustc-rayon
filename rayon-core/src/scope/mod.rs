@@ -8,6 +8,7 @@ use crate::job::{HeapJob, JobFifo};
 use crate::latch::{CountLatch, Latch};
 use crate::log::Event::*;
 use crate::registry::{in_worker, Registry, WorkerThread};
+use crate::tlv;
 use crate::unwind;
 use std::any::Any;
 use std::fmt;
@@ -59,6 +60,9 @@ struct ScopeBase<'scope> {
     /// `Sync`, but it's still safe to let the `Scope` implement `Sync` because
     /// the closures are only *moved* across threads to be executed.
     marker: PhantomData<Box<dyn FnOnce(&Scope<'scope>) + Send + Sync + 'scope>>,
+
+    /// The TLV at the scope's creation. Used to set the TLV for spawned jobs.
+    tlv: usize,
 }
 
 /// Create a "fork-join" scope `s` and invokes the closure with a
@@ -451,7 +455,7 @@ impl<'scope> Scope<'scope> {
     {
         self.base.increment();
         unsafe {
-            let job_ref = Box::new(HeapJob::new(move || {
+            let job_ref = Box::new(HeapJob::new(self.base.tlv, move || {
                 self.base.execute_job(move || body(self))
             }))
             .as_job_ref();
@@ -492,7 +496,7 @@ impl<'scope> ScopeFifo<'scope> {
     {
         self.base.increment();
         unsafe {
-            let job_ref = Box::new(HeapJob::new(move || {
+            let job_ref = Box::new(HeapJob::new(self.base.tlv, move || {
                 self.base.execute_job(move || body(self))
             }))
             .as_job_ref();
@@ -519,6 +523,7 @@ impl<'scope> ScopeBase<'scope> {
             panic: AtomicPtr::new(ptr::null_mut()),
             job_completed_latch: CountLatch::new(),
             marker: PhantomData,
+            tlv: tlv::get(),
         }
     }
 
@@ -536,6 +541,8 @@ impl<'scope> ScopeBase<'scope> {
     {
         let result = self.execute_job_closure(func);
         self.steal_till_jobs_complete(owner_thread);
+        // Restore the TLV if we ran some jobs while waiting
+        tlv::set(self.tlv);
         result.unwrap() // only None if `op` panicked, and that would have been propagated
     }
 
@@ -612,6 +619,8 @@ impl<'scope> ScopeBase<'scope> {
             log!(ScopeCompletePanicked {
                 owner_thread: owner_thread.index()
             });
+            // Restore the TLV if we ran some jobs while waiting
+            tlv::set(self.tlv);
             let value: Box<Box<dyn Any + Send + 'static>> = mem::transmute(panic);
             unwind::resume_unwinding(*value);
         } else {

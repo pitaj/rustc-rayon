@@ -51,6 +51,8 @@ mod util;
 mod compile_fail;
 mod test;
 
+pub mod tlv;
+
 pub use self::join::{join, join_context};
 pub use self::registry::ThreadBuilder;
 pub use self::scope::{scope, Scope};
