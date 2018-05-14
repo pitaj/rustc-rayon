@@ -5,7 +5,8 @@ use crate::sleep::Sleep;
 use crate::unwind;
 use crate::util::leak;
 use crate::{
-    ErrorKind, ExitHandler, PanicHandler, StartHandler, ThreadPoolBuildError, ThreadPoolBuilder,
+    DeadlockHandler, ErrorKind, ExitHandler, PanicHandler, StartHandler, ThreadPoolBuildError,
+    ThreadPoolBuilder,
 };
 use crossbeam_deque::{Steal, Stealer, Worker};
 use crossbeam_queue::SegQueue;
@@ -131,11 +132,12 @@ where
     }
 }
 
-pub(super) struct Registry {
+pub struct Registry {
     thread_infos: Vec<ThreadInfo>,
     sleep: Sleep,
     injected_jobs: SegQueue<JobRef>,
     panic_handler: Option<Box<PanicHandler>>,
+    deadlock_handler: Option<Box<DeadlockHandler>>,
     start_handler: Option<Box<StartHandler>>,
     exit_handler: Option<Box<ExitHandler>>,
 
@@ -235,10 +237,11 @@ impl Registry {
 
         let registry = Arc::new(Registry {
             thread_infos: stealers.into_iter().map(ThreadInfo::new).collect(),
-            sleep: Sleep::new(),
+            sleep: Sleep::new(n_threads),
             injected_jobs: SegQueue::new(),
             terminate_latch: CountLatch::new(),
             panic_handler: builder.take_panic_handler(),
+            deadlock_handler: builder.take_deadlock_handler(),
             start_handler: builder.take_start_handler(),
             exit_handler: builder.take_exit_handler(),
         });
@@ -265,7 +268,7 @@ impl Registry {
         Ok(registry.clone())
     }
 
-    pub(super) fn current() -> Arc<Registry> {
+    pub fn current() -> Arc<Registry> {
         unsafe {
             let worker_thread = WorkerThread::current();
             if worker_thread.is_null() {
@@ -512,6 +515,24 @@ impl Registry {
     }
 }
 
+/// Mark a Rayon worker thread as blocked. This triggers the deadlock handler
+/// if no other worker thread is active
+#[inline]
+pub fn mark_blocked() {
+    let worker_thread = WorkerThread::current();
+    assert!(!worker_thread.is_null());
+    unsafe {
+        let registry = &(*worker_thread).registry;
+        registry.sleep.mark_blocked(&registry.deadlock_handler)
+    }
+}
+
+/// Mark a previously blocked Rayon worker thread as unblocked
+#[inline]
+pub fn mark_unblocked(registry: &Registry) {
+    registry.sleep.mark_unblocked()
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) struct RegistryId {
     addr: usize,
@@ -666,7 +687,11 @@ impl WorkerThread {
                 yields = self.registry.sleep.work_found(self.index, yields);
                 self.execute(job);
             } else {
-                yields = self.registry.sleep.no_work_found(self.index, yields);
+                yields = self.registry.sleep.no_work_found(
+                    self.index,
+                    yields,
+                    &self.registry.deadlock_handler,
+                );
             }
         }
 
