@@ -5,8 +5,8 @@ use crate::log::Logger;
 use crate::sleep::Sleep;
 use crate::unwind;
 use crate::{
-    DeadlockHandler, ErrorKind, ExitHandler, PanicHandler, StartHandler, ThreadPoolBuildError,
-    ThreadPoolBuilder,
+    AcquireThreadHandler, DeadlockHandler, ErrorKind, ExitHandler, PanicHandler,
+    ReleaseThreadHandler, StartHandler, ThreadPoolBuildError, ThreadPoolBuilder,
 };
 use crossbeam_deque::{Injector, Steal, Stealer, Worker};
 use std::any::Any;
@@ -137,9 +137,11 @@ pub struct Registry {
     sleep: Sleep,
     injected_jobs: Injector<JobRef>,
     panic_handler: Option<Box<PanicHandler>>,
-    deadlock_handler: Option<Box<DeadlockHandler>>,
+    pub(crate) deadlock_handler: Option<Box<DeadlockHandler>>,
     start_handler: Option<Box<StartHandler>>,
     exit_handler: Option<Box<ExitHandler>>,
+    pub(crate) acquire_thread_handler: Option<Box<AcquireThreadHandler>>,
+    pub(crate) release_thread_handler: Option<Box<ReleaseThreadHandler>>,
 
     // When this latch reaches 0, it means that all work on this
     // registry must be complete. This is ensured in the following ways:
@@ -245,6 +247,8 @@ impl Registry {
             deadlock_handler: builder.take_deadlock_handler(),
             start_handler: builder.take_start_handler(),
             exit_handler: builder.take_exit_handler(),
+            acquire_thread_handler: builder.take_acquire_thread_handler(),
+            release_thread_handler: builder.take_release_thread_handler(),
         });
 
         // If we return early or panic, make sure to terminate existing threads.
@@ -353,10 +357,23 @@ impl Registry {
 
     /// Waits for the worker threads to stop. This is used for testing
     /// -- so we can check that termination actually works.
-    #[cfg(test)]
     pub(super) fn wait_until_stopped(&self) {
+        self.release_thread();
         for info in &self.thread_infos {
             info.stopped.wait();
+        }
+        self.acquire_thread();
+    }
+
+    pub(crate) fn acquire_thread(&self) {
+        if let Some(ref acquire_thread_handler) = self.acquire_thread_handler {
+            acquire_thread_handler();
+        }
+    }
+
+    pub(crate) fn release_thread(&self) {
+        if let Some(ref release_thread_handler) = self.release_thread_handler {
+            release_thread_handler();
         }
     }
 
@@ -409,7 +426,7 @@ impl Registry {
             .new_injected_jobs(usize::MAX, injected_jobs.len() as u32, queue_was_empty);
     }
 
-    fn has_injected_job(&self) -> bool {
+    pub(crate) fn has_injected_job(&self) -> bool {
         !self.injected_jobs.is_empty()
     }
 
@@ -474,7 +491,9 @@ impl Registry {
                 l,
             );
             self.inject(&[job.as_job_ref()]);
+            self.release_thread();
             job.latch.wait_and_reset(); // Make sure we can use the same latch again next time.
+            self.acquire_thread();
 
             // flush accumulated logs as we exit the thread
             self.logger.log(|| Flush);
@@ -752,12 +771,9 @@ impl WorkerThread {
                 self.execute(job);
                 idle_state = self.registry.sleep.start_looking(self.index, latch);
             } else {
-                self.registry.sleep.no_work_found(
-                    &mut idle_state,
-                    latch,
-                    || self.registry.has_injected_job(),
-                    &self.registry.deadlock_handler,
-                )
+                self.registry
+                    .sleep
+                    .no_work_found(&mut idle_state, latch, &self.registry)
             }
         }
 
@@ -859,6 +875,7 @@ unsafe fn main_loop(worker: Worker<JobRef>, registry: Arc<Registry>, index: usiz
         worker: index,
         terminate_addr: my_terminate_latch.as_core_latch().addr(),
     });
+    registry.acquire_thread();
     worker_thread.wait_until(my_terminate_latch);
 
     // Should not be any work left in our queue.
@@ -882,6 +899,8 @@ unsafe fn main_loop(worker: Worker<JobRef>, registry: Arc<Registry>, index: usiz
         }
         // We're already exiting the thread, there's nothing else to do.
     }
+
+    registry.release_thread();
 }
 
 /// If already in a worker-thread, just execute `op`.  Otherwise,

@@ -4,6 +4,7 @@
 use crate::latch::CoreLatch;
 use crate::log::Event::*;
 use crate::log::Logger;
+use crate::registry::Registry;
 use crate::DeadlockHandler;
 use crossbeam_utils::CachePadded;
 use std::sync::atomic::Ordering;
@@ -160,8 +161,7 @@ impl Sleep {
         &self,
         idle_state: &mut IdleState,
         latch: &CoreLatch,
-        has_injected_jobs: impl FnOnce() -> bool,
-        deadlock_handler: &Option<Box<DeadlockHandler>>,
+        registry: &Registry,
     ) {
         if idle_state.rounds < ROUNDS_UNTIL_SLEEPY {
             thread::yield_now();
@@ -175,7 +175,7 @@ impl Sleep {
             thread::yield_now();
         } else {
             debug_assert_eq!(idle_state.rounds, ROUNDS_UNTIL_SLEEPING);
-            self.sleep(idle_state, latch, has_injected_jobs, deadlock_handler);
+            self.sleep(idle_state, latch, registry);
         }
     }
 
@@ -193,13 +193,7 @@ impl Sleep {
     }
 
     #[cold]
-    fn sleep(
-        &self,
-        idle_state: &mut IdleState,
-        latch: &CoreLatch,
-        has_injected_jobs: impl FnOnce() -> bool,
-        deadlock_handler: &Option<Box<DeadlockHandler>>,
-    ) {
+    fn sleep(&self, idle_state: &mut IdleState, latch: &CoreLatch, registry: &Registry) {
         let worker_index = idle_state.worker_index;
 
         if !latch.get_sleepy() {
@@ -266,7 +260,7 @@ impl Sleep {
         // - that job triggers the rollover over the JEC such that we don't see it
         // - we are the last active worker thread
         std::sync::atomic::fence(Ordering::SeqCst);
-        if has_injected_jobs() {
+        if registry.has_injected_job() {
             // If we see an externally injected job, then we have to 'wake
             // ourselves up'. (Ordinarily, `sub_sleeping_thread` is invoked by
             // the one that wakes us.)
@@ -276,7 +270,7 @@ impl Sleep {
                 // Decrement the number of active threads and check for a deadlock
                 let mut data = self.data.lock().unwrap();
                 data.active_threads -= 1;
-                data.deadlock_check(deadlock_handler);
+                data.deadlock_check(&registry.deadlock_handler);
             }
 
             // If we don't see an injected job (the normal case), then flag
