@@ -8,7 +8,6 @@ license = "Apache-2.0/MIT"
 repository = "https://github.com/rust-lang/rustc-rayon"
 documentation = "https://docs.rs/rustc-rayon-core/"
 edition = "2018"
-links = "rayon-core"
 build = "build.rs"
 readme = "README.md"
 keywords = ["parallel", "thread", "concurrency", "join", "performance"]
