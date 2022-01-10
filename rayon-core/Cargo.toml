@@ -1,6 +1,6 @@
 [package]
 name = "rustc-rayon-core"
-version = "0.3.1" # reminder to update html_root_url attribute
+version = "0.3.2" # reminder to update html_root_url attribute
 authors = ["Niko Matsakis <niko@alum.mit.edu>",
            "Josh Stone <cuviper@gmail.com>"]
 description = "Core APIs for Rayon - fork for rustc"
@@ -17,9 +17,8 @@ categories = ["concurrency"]
 [dependencies]
 num_cpus = "1.2"
 lazy_static = "1"
-crossbeam-deque = "0.7.2"
-crossbeam-queue = "0.2"
-crossbeam-utils = "0.7"
+crossbeam-deque = "0.8.0"
+crossbeam-utils = "0.8.0"
 
 [dev-dependencies]
 rand = "0.7"
