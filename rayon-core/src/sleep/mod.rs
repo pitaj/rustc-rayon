@@ -281,10 +281,12 @@ impl Sleep {
             // that whomever is coming to wake us will have to wait until we
             // release the mutex in the call to `wait`, so they will see this
             // boolean as true.)
+            registry.release_thread();
             *is_blocked = true;
             while *is_blocked {
                 is_blocked = sleep_state.condvar.wait(is_blocked).unwrap();
             }
+            registry.acquire_thread();
         }
 
         // Update other state:
