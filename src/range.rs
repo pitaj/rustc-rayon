@@ -68,13 +68,13 @@ struct IterProducer<T> {
 
 impl<T> IntoIterator for IterProducer<T>
 where
-    Range<T>: Iterator,
+    Range<T>: IntoIterator,
 {
-    type Item = <Range<T> as Iterator>::Item;
-    type IntoIter = Range<T>;
+    type Item = <Range<T> as IntoIterator>::Item;
+    type IntoIter = <Range<T> as IntoIterator>::IntoIter;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.range
+        self.range.into_iter()
     }
 }
 
@@ -193,10 +193,10 @@ macro_rules! indexed_range_impl {
         }
 
         impl Producer for IterProducer<$t> {
-            type Item = <Range<$t> as Iterator>::Item;
-            type IntoIter = Range<$t>;
+            type Item = <Range<$t> as IntoIterator>::Item;
+            type IntoIter = <Range<$t> as IntoIterator>::IntoIter;
             fn into_iter(self) -> Self::IntoIter {
-                self.range
+                self.range.into_iter()
             }
 
             fn split_at(self, index: usize) -> (Self, Self) {
@@ -253,7 +253,7 @@ macro_rules! unindexed_range_impl {
             }
 
             fn opt_len(iter: &Iter<$t>) -> Option<usize> {
-                usize::try_from(iter.range.len()).ok()
+                usize::try_from(UnindexedRangeLen::len(&iter.range)).ok()
             }
         }
 
@@ -261,7 +261,7 @@ macro_rules! unindexed_range_impl {
             type Item = $t;
 
             fn split(mut self) -> (Self, Option<Self>) {
-                let index = self.range.len() / 2;
+                let index = UnindexedRangeLen::len(&self.range) / 2;
                 if index > 0 {
                     let mid = self.range.start.wrapping_add(index as $t);
                     let right = mid..self.range.end;

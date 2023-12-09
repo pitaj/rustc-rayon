@@ -94,7 +94,7 @@ where
     P: Producer,
 {
     type Item = (usize, P::Item);
-    type IntoIter = iter::Zip<Range<usize>, P::IntoIter>;
+    type IntoIter = iter::Zip<<Range<usize> as IntoIterator>::IntoIter, P::IntoIter>;
 
     fn into_iter(self) -> Self::IntoIter {
         // Enumerate only works for IndexedParallelIterators. Since those
